@@ -1,0 +1,34 @@
+<library path="alberto_controllers">
+
+    <class name="alberto_controllers/panda/JointVelocityController"
+           type="alberto_controllers::panda::JointVelocityController" 
+           base_class_type="controller_interface::ControllerInterface">
+        <description>
+            Joint Velocity controller for a Panda arm.
+        </description>
+    </class>
+
+    <class name="alberto_controllers/panda/JointImpedanceController"
+           type="alberto_controllers::panda::JointImpedanceController" 
+           base_class_type="controller_interface::ControllerInterface">
+        <description>
+            The joint impedance controller subscribes to desired joint position.
+        </description>
+    </class>
+
+    <!--<class name="alberto_controllers/panda/MultiJointImpedanceExampleController"
+           type="alberto_controllers::panda::MultiJointImpedanceExampleController" 
+           base_class_type="controller_interface::ControllerInterface">
+        <description>
+            Dummy multi joint impedance controller.
+        </description>
+    </class>
+    <class name="alberto_controllers/panda/DualJointVelocityExampleController"
+           type="alberto_controllers::panda::DualJointVelocityExampleController" 
+           base_class_type="controller_interface::ControllerInterface">
+        <description>
+            Dummy dual joint velocity controller.
+        </description>
+    </class>-->
+  
+</library>
