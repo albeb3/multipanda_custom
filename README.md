@@ -51,8 +51,8 @@ alberto_controllers/
 Currently implemented controllers include:
 
 - Joint Velocity Controller
-- Joint Impedance Controller *(work in progress)*
-- Dual Joint Velocity Controller *(work in progress)*
+- Joint Impedance Controller 
+- Dual Joint Velocity Controller 
 - Dual Joint Impedance Controller *(work in progress)*
 
 The package is organized by robot family, allowing future support for additional robots without changing the existing architecture.

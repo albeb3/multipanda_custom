@@ -18,6 +18,7 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(realtime_tools REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
@@ -25,6 +26,7 @@ find_package(geometry_msgs REQUIRED)
 add_library(${PROJECT_NAME} SHARED
   src/panda/joint_velocity_controller.cpp
   src/panda/joint_impedance_controller.cpp
+  src/panda/dual_joint_velocity_controller.cpp
 )
 
 target_include_directories(${PROJECT_NAME}
@@ -41,6 +43,7 @@ ament_target_dependencies(${PROJECT_NAME}
   rclcpp_lifecycle
   std_msgs
   geometry_msgs
+  realtime_tools
 )
 
 target_link_libraries(${PROJECT_NAME}

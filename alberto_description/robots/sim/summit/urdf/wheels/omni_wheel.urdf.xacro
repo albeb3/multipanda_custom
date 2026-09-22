@@ -1,0 +1,113 @@
+<?xml version="1.0"?>
+<robot name="wheel" xmlns:xacro="http://wiki.ros.org/xacro">
+
+<!-- Constants -->
+<xacro:property name="M_PI" value="3.1415926535897931" />
+
+<!-- Omni wheel geometry and physical properties -->
+<xacro:property name="omni_wheel_radius" value="0.127" />
+<xacro:property name="omni_wheel_height" value="0.087" />
+<xacro:property name="omni_wheel_mass"   value="6.5" />
+
+
+<!-- Cylinder inertia macro (axis along Y after collision rotation) -->
+<xacro:macro name="cylinder_inertia" params="m r h">
+  <inertia  
+      ixx="${m*(3*r*r + h*h)/12}"
+      ixy="0" 
+      ixz="0"
+      iyy="${m*r*r/2}"
+      iyz="0"
+      izz="${m*(3*r*r + h*h)/12}" />
+</xacro:macro>
+
+
+<!-- Corrected omni wheel macro -->
+<xacro:macro name="omni_wheel" params="joint_name prefix parent *origin reflect hq">
+
+  <!-- Wheel rotation joint -->
+  <joint name="${joint_name}" type="continuous">
+    <parent link="${parent}"/>
+    <child link="${prefix}_wheel_link"/>
+    <xacro:insert_block name="origin" />
+    <axis xyz="0 1 0"/>
+    <limit effort="100" velocity="100"/>
+    <joint_properties damping="0.0" friction="0.0"/>
+  </joint>
+
+
+  <!-- Wheel link -->
+  <link name="${prefix}_wheel_link">
+
+    <!-- Visual -->
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+
+      <xacro:if value="${hq}">
+        <xacro:if value="${reflect}">
+          <geometry>
+            <mesh filename="package://garmi_description/robots/meshes/wheels/omni_wheel_1.dae"/>
+          </geometry>
+        </xacro:if>
+        <xacro:unless value="${reflect}">
+          <geometry>
+            <mesh filename="package://garmi_description/robots//meshes/wheels/omni_wheel_2.dae"/>
+          </geometry>
+        </xacro:unless>
+      </xacro:if>
+
+      <xacro:unless value="${hq}">
+        <geometry>
+          <sphere radius="${omni_wheel_radius}"/>
+        </geometry>
+      </xacro:unless>
+
+      <material name="darkgrey">
+        <color rgba="0.2 0.2 0.2 1"/>
+      </material>
+    </visual>
+
+
+    <!-- Collision -->
+    <collision>
+      <!-- Rotate cylinder so its axis aligns with the wheel rotation axis (Y-axis) -->
+      <origin xyz="0 0 0" rpy="${M_PI/2} 0 0"/>
+
+      <geometry>
+        <cylinder length="${omni_wheel_height}" radius="${omni_wheel_radius}"/>
+      </geometry>
+    </collision>
+
+
+    <!-- Inertia -->
+    <inertial>
+      <mass value="${omni_wheel_mass}"/>
+      <origin xyz="0 0 0"/>
+      <xacro:cylinder_inertia 
+          m="${omni_wheel_mass}" 
+          r="${omni_wheel_radius}" 
+          h="${omni_wheel_height}"/>
+    </inertial>
+
+  </link>
+
+
+  <!-- Transmission -->
+  <transmission name="${joint_name}_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+
+    <joint name="${joint_name}">
+      <hardwareInterface>hardware_interface/VelocityJointInterface</hardwareInterface>
+    </joint>
+
+    <actuator name="${joint_name}_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+</xacro:macro>
+
+
+
+
+</robot>

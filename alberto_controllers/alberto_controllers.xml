@@ -16,6 +16,14 @@
         </description>
     </class>
 
+    <class name="alberto_controllers/panda/DualJointVelocityController"
+           type="alberto_controllers::panda::DualJointVelocityController" 
+           base_class_type="controller_interface::ControllerInterface">
+        <description>
+            Dual joint velocity controller for two Panda arms.
+        </description>
+    </class>
+
     <!--<class name="alberto_controllers/panda/MultiJointImpedanceExampleController"
            type="alberto_controllers::panda::MultiJointImpedanceExampleController" 
            base_class_type="controller_interface::ControllerInterface">

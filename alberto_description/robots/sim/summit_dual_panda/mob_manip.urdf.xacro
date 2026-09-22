@@ -1,0 +1,190 @@
+<?xml version="1.0" ?>
+<robot name="summit_xl" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="arm_id_1" default="left" />
+  <xacro:arg name="arm_id_2" default="right" />
+  <xacro:arg name="hand_1" default="false"/> <!-- Should a franka_gripper be mounted at the flange?" -->
+  <xacro:arg name="hand_2" default="false"/> <!-- Should a franka_gripper be mounted at the flange?" -->
+  <xacro:arg name="initial_positions_1" default="0.0 ${-pi/4} 0.0 ${-3*pi/4} 0.0 ${pi/2} ${pi/4}"/> <!-- initial joint positions of the robot-->
+  <xacro:arg name="initial_positions_2" default="0.0 ${-pi/4} 0.0 ${-3*pi/4} 0.0 ${pi/2} ${pi/4}"/> <!-- initial joint positions of the robot-->
+	
+	
+  <xacro:include filename="$(find franka_description)/robots/common/panda_arm.xacro"/>
+
+	<!-- ***************** -->
+	<!-- Imported elements -->
+	<!-- ***************** -->
+
+	<!-- First we import all posible elements defined in the urdf.xacro files. All these elements are defined as macro:xacros -->
+
+	<!-- Import summit XL base elements -->
+	<xacro:include filename="$(find alberto_description)/robots/sim/summit/urdf/bases/summit_xls_base.urdf.xacro" />
+
+	<!-- Import summit XL wheels -->
+	<xacro:include filename="$(find alberto_description)/robots/sim/summit/urdf/wheels/rubber_wheel.urdf.xacro" />
+  <xacro:include filename="$(find alberto_description)/robots/sim/summit/urdf/wheels/omni_wheel.urdf.xacro" />
+
+
+
+  
+  
+
+
+	<xacro:property name="PI" value="3.1415926535897931"/>
+
+	<!-- Wheel parameters -->
+	<xacro:property name="wheel_offset_x" value="0.229" />    <!-- x,y,z in translation from base_link to the center of the wheel -->
+	<xacro:property name="wheel_offset_y" value="0.235" />
+	<xacro:property name="wheel_offset_z" value="0.0" />
+
+	<!-- Flag to select the high or low quality model -->
+	<xacro:property name="hq" value="true" />
+
+	<xacro:arg name="prefix" default="summit_xls_"/>
+	<xacro:arg name="ros_planar_move_plugin" default="false"/>
+  <xacro:arg name="ros_planar_move_plugin_force_based" default="false"/>
+	<xacro:arg name="omni_wheels" default="true"/>
+	<xacro:arg name="gpu" default="false"/>
+	<xacro:arg name="gps_latitude" default="0"/>
+	<xacro:arg name="gps_longitude" default="0"/>
+
+  <xacro:macro name="summit_xls" params="prefix publish_bf hq omni_wheels">
+
+    <!-- Summit XL base -->
+    <xacro:summit_xls_base prefix="${prefix}" publish_bf="${publish_bf}" hq="${hq}" />
+
+    <xacro:unless value="${omni_wheels}">
+      <xacro:rubber_wheel prefix="${prefix}front_right" parent="${prefix}base_link" reflect="false" hq="${hq}">
+        <origin xyz="${wheel_offset_x} -${wheel_offset_y} ${wheel_offset_z}" rpy="0 0 0"/>
+      </xacro:rubber_wheel>
+
+      <xacro:rubber_wheel prefix="${prefix}front_left" parent="${prefix}base_link" reflect="true" hq="${hq}">
+        <origin xyz="${wheel_offset_x} ${wheel_offset_y} ${wheel_offset_z}" rpy="0 0 0"/>
+      </xacro:rubber_wheel>
+
+      <xacro:rubber_wheel prefix="${prefix}back_left" parent="${prefix}base_link" reflect="true" hq="${hq}">
+        <origin xyz="-${wheel_offset_x} ${wheel_offset_y} ${wheel_offset_z}" rpy="0 0 0"/>
+      </xacro:rubber_wheel>
+
+      <xacro:rubber_wheel prefix="${prefix}back_right" parent="${prefix}base_link" reflect="false" hq="${hq}">
+        <origin xyz="-${wheel_offset_x} -${wheel_offset_y} ${wheel_offset_z}" rpy="0 0 0"/>
+      </xacro:rubber_wheel>
+    </xacro:unless>
+
+    <xacro:if value="${omni_wheels}">
+
+    <xacro:omni_wheel 
+      prefix="${prefix}front_right" 
+      joint_name="summit_xls_fr_joint"
+      parent="${prefix}base_link"
+      reflect="false"
+      hq="${hq}">
+    <origin xyz="${wheel_offset_x} -${wheel_offset_y} ${wheel_offset_z}" rpy="0 0 0"/>
+  </xacro:omni_wheel>
+
+    <xacro:omni_wheel 
+      prefix="${prefix}front_left"
+      joint_name="summit_xls_fl_joint" 
+      parent="${prefix}base_link"
+      reflect="false"
+      hq="${hq}">
+    <origin xyz="${wheel_offset_x} ${wheel_offset_y} ${wheel_offset_z}" rpy="0 0 0"/>
+  </xacro:omni_wheel>
+
+      <xacro:omni_wheel 
+      prefix="${prefix}back_left"
+      joint_name="summit_xls_bl_joint" 
+      parent="${prefix}base_link"
+      reflect="false"
+      hq="${hq}">
+    <origin xyz="-${wheel_offset_x} ${wheel_offset_y} ${wheel_offset_z}" rpy="0 0 0"/>
+  </xacro:omni_wheel>
+
+      <xacro:omni_wheel 
+      prefix="${prefix}back_right"
+      joint_name="summit_xls_br_joint" 
+      parent="${prefix}base_link"
+      reflect="false"
+      hq="${hq}">
+    <origin xyz="-${wheel_offset_x} -${wheel_offset_y} ${wheel_offset_z}" rpy="0 0 0"/>
+  </xacro:omni_wheel>
+
+
+    </xacro:if>
+
+  </xacro:macro>
+
+  <!-- Example instantiation -->
+
+  <xacro:summit_xls prefix="summit_xls_" publish_bf="true" hq="true" omni_wheels="true"/>
+  <link name="common_link"/>
+  <joint name="common_joint" type="fixed">
+    <parent link="summit_xls_base_link"/>
+    <child link="common_link"/>
+    <origin xyz="0.26 0 0.385" rpy="0 0 0"/>
+  </joint>
+  <link name="wam/sensor/zed"/>
+  <joint name="zed_joint" type="fixed">
+    <parent link="common_link"/>
+    <child link="wam/sensor/zed"/>
+    <origin xyz="0 0 0.73" rpy="0 ${pi*15/180} 0"/>
+  </joint>
+  <!-- Link for ZED camera pitch joint 
+  <link name="zed_link_pitch"/>
+  <joint name="zed_joint_pitch" type="revolute">
+    <parent link="wam/sensor/zed"/>
+    <child link="zed_link_pitch"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="0.5" lower="${-60 * pi/180}" upper="${60 * pi/180}" velocity="2.6"/>
+  </joint>-->
+
+  <xacro:panda_arm arm_id="left" connected_to="common_link" rpy="0 0 0"  xyz="0 0.19 0" safety_distance="0.03"/>
+  <xacro:panda_arm arm_id="right" connected_to="common_link" rpy="0 0 0"  xyz="0 -0.19 0" safety_distance="0.03"/>
+  <xacro:include filename="$(find garmi_description)/robots/dual_panda_mjros.ros2_control.xacro"/>
+
+  <xacro:dual_panda_mjros_ros2_control  ns_1="$(arg arm_id_1)" 
+                                        ns_2="$(arg arm_id_2)" 
+                                        hand_1="$(arg hand_1)" 
+                                        hand_2="$(arg hand_2)"
+                                        />
+
+
+   <ros2_control name="MujocoSystem" type="system">
+    <hardware>
+      <plugin>mujoco_ros2_control_system/MujocoRos2System</plugin>
+    </hardware>
+
+	<xacro:macro name="configure_wheel" params="joint_name">
+        <joint name="${joint_name}">
+          <param name="initial_position">0.0</param>
+          <param name="kv">10</param>
+          <command_interface name="velocity"/>
+          <state_interface name="position"/>
+          <state_interface name="velocity"/>
+        </joint>
+      </xacro:macro>
+
+	<xacro:configure_wheel joint_name="summit_xls_fr_joint"/>
+  <xacro:configure_wheel joint_name="summit_xls_fl_joint"/>
+	<xacro:configure_wheel joint_name="summit_xls_br_joint"/>
+  <xacro:configure_wheel joint_name="summit_xls_bl_joint"/>
+
+<!--  <xacro:macro name="configure_zed" params="joint_name">
+      <joint name="${joint_name}">
+        <param name="initial_position">0.0</param>
+        <param name="kv">10</param>
+        <command_interface name="effort"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+    </xacro:macro>
+    <xacro:configure_zed joint_name="zed_joint_pitch"/>-->
+
+
+
+
+  </ros2_control>
+
+</robot>

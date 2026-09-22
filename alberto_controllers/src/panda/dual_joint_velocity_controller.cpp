@@ -22,28 +22,20 @@
 #include <Eigen/Eigen>
 
 
-namespace {
-template <class T, size_t N>
-std::ostream& operator<<(std::ostream& ostream, const std::array<T, N>& array) {
-  ostream << "[";
-  std::copy(array.cbegin(), array.cend() - 1, std::ostream_iterator<T>(ostream, ","));
-  std::copy(array.cend() - 1, array.cend(), std::ostream_iterator<T>(ostream));
-  ostream << "]";
-  return ostream;
-}
-}  // anonymous namespace
 
 
-
-
-namespace alberto_controllers {
+namespace alberto_controllers 
+{
+namespace panda {
 
 controller_interface::InterfaceConfiguration
-DualJointVelocityExampleController::command_interface_configuration() const {
+DualJointVelocityController::command_interface_configuration() const {
+  
   controller_interface::InterfaceConfiguration config;
+  
   config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
   for(auto& arm_container_pair : arms_){
-    for (int i = 1; i <= num_joints; ++i) {
+    for (std::size_t i = 1; i <= NUM_JOINTS; ++i) {
       config.names.push_back(arm_container_pair.first + "_joint" + std::to_string(i) + "/velocity");
     }
   }
@@ -51,145 +43,161 @@ DualJointVelocityExampleController::command_interface_configuration() const {
 }
 
 controller_interface::InterfaceConfiguration
-DualJointVelocityExampleController::state_interface_configuration() const {
+DualJointVelocityController::state_interface_configuration() const {
+  
   controller_interface::InterfaceConfiguration config;
+  
   config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
-  for(auto& arm_container_pair : arms_){
-    for (int i = 1; i <= num_joints; ++i) {
-      config.names.push_back(arm_container_pair.first + "_joint" + std::to_string(i) + "/position");
-      config.names.push_back(arm_container_pair.first + "_joint" + std::to_string(i) + "/velocity");
+  for(auto& arm_container_pair : arms_)
+  {
+    for (std::size_t i = 1; i <= NUM_JOINTS; ++i) 
+    {
+      const std::string joint_name = arm_container_pair.first + "_joint" + std::to_string(i);
+      
+      config.names.push_back(joint_name + "/position");
+      
+      config.names.push_back(joint_name + "/velocity");
     }
-    // config.names.push_back(arm_container_pair.first+"/robot_state");//Define robot state interface to get information (robot state+model)
-    // config.names.push_back(arm_container_pair.first+"/robot_model");
   }
   return config;
 }
 
-controller_interface::return_type DualJointVelocityExampleController::update(
-    const rclcpp::Time& /*time*/,
-    const rclcpp::Duration& period) {
-    std::lock_guard<std::mutex> lock(cmd_mutex_);
-    rclcpp::Time now = this->get_node()->now();
-    if ((now - last_msg_time_).seconds() > 0.5) {
-      dq_cmd_.fill(0.0); // Set to zero if no command received for 0.5 seconds
-    }
-    for (size_t i = 0; i < 14; ++i) {
-      command_interfaces_[i].set_value(dq_cmd_[i]);
-    }
-  // updateJointStates();
-  // Eigen::Matrix<double, 4, 4> left_arm_pose = getPoseMatrixEigen(left_arm_model);
-  // Eigen::Matrix<double, 4, 4> right_arm_pose = getPoseMatrixEigen(right_arm_model);
-  // RCLCPP_INFO(get_node()->get_logger(), "Left arm pose: %s", left_arm_pose.format(Eigen::IOFormat(Eigen::StreamPrecision, Eigen::DontAlignCols, ", ", "\n", "[", "]")));
-  // RCLCPP_INFO(get_node()->get_logger(), "Right arm pose: %s", right_arm_pose.format(Eigen::IOFormat(Eigen::StreamPrecision, Eigen::DontAlignCols, ", ", "\n", "[", "]")));
+controller_interface::return_type DualJointVelocityController::update( const rclcpp::Time& , const rclcpp::Duration& ) 
+{
+  if (command_interfaces_.size() != NUM_JOINTS * NUM_ARMS)
+  {
+    RCLCPP_ERROR_THROTTLE( get_node()->get_logger(), *get_node()->get_clock(), 1000,
+      "Expected %zu command interfaces, found %zu", NUM_JOINTS * NUM_ARMS, command_interfaces_.size());
+    return controller_interface::return_type::ERROR;
+  }
+  std::array<double, NUM_JOINTS * NUM_ARMS> command_snapshot{};
+  {
+    std::lock_guard<std::mutex> lock(command_mutex_);
+    command_snapshot = command_;
+  }
 
-    // for (size_t i= 0; i<7; i++) {
-    //   command_interfaces_[i].set_value(dq_left_(i));
-    //   command_interfaces_[i+7].set_value(dq_right_(i));
-    // }
-
- 
-    return controller_interface::return_type::OK;
+  rclcpp::Time now = this->get_node()->now();
+  if ((now - last_msg_time_).seconds() > 0.5) {
+    RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 5000,
+      "No joint velocity command received for 0.5 seconds. "
+      "Setting joint velocities to zero.");
+    command_snapshot.fill(0.0); 
+  }
+  for (std::size_t i = 0; i < NUM_JOINTS * NUM_ARMS; ++i) 
+  {
+    command_interfaces_[i].set_value(command_snapshot[i]);
+  }
+  
+  return controller_interface::return_type::OK;
 }
 
-CallbackReturn DualJointVelocityExampleController::on_init() {
-  // try {
-  //   rclcpp::Parameter arm_count;
-  //   bool bHas_arm_count = get_node()->get_parameter("arm_count", arm_count);
-  //   //num_robots = get_node()->get_parameter("arm_count").as_int();
-  //   if(!bHas_arm_count){
-  //     fprintf(stderr, "Failed to get arm_count parameter. Make sure it's set in the yaml file.\n");
-  //     return CallbackReturn::ERROR;
-  //   }
-  //   num_robots = arm_count.as_int();
+CallbackReturn DualJointVelocityController::on_init() 
+{
+  try 
+  {
+    auto_declare<std::string>("arm_1.arm_id", "mj_left");
+    auto_declare<std::string>("arm_2.arm_id", "mj_right");
+    auto_declare<std::string>("command_topic", "/joint_velocities");
+  }
+  catch (const std::exception& e) 
+  {
+    fprintf(stderr, "Exception thrown during init stage with message: %s \n", e.what());
+    return CallbackReturn::ERROR;
+  }
 
-  // } catch (const std::exception& e) {
-  //   fprintf(stderr, "Exception thrown during init stage with message: %s \n", e.what());
-  //   return CallbackReturn::ERROR;
-  // }
+  command_.fill(0.0);
+
   return CallbackReturn::SUCCESS;
 }
 
-CallbackReturn DualJointVelocityExampleController::on_configure(
-    const rclcpp_lifecycle::State& /*previous_state*/) {
+CallbackReturn DualJointVelocityController::on_configure( const rclcpp_lifecycle::State& /*previous_state*/) 
+{
 
-    for(int i = 1; i <= 2; i++){
+  for(std::size_t i = 1; i <= NUM_ARMS; i++){
     std::string arm_id_param_name = "arm_" + std::to_string(i) + ".arm_id";
     rclcpp::Parameter arm_id_param = this->get_node()->get_parameter(arm_id_param_name);
     arms_.insert(std::make_pair(arm_id_param.as_string(), ArmContainer()));
   }
 
-   int i = 1;
   for(auto& arm_container_pair : arms_){
     auto &arm = arm_container_pair.second;
     arm.arm_id_ = arm_container_pair.first;
-    i++;
   }
-  dq_left_.setZero();
-  dq_right_.setZero();
-  dq_cmd_.fill(0.0);
+  rclcpp::Parameter command_topic_param = this->get_node()->get_parameter("command_topic");
+  command_topic_ = command_topic_param.as_string();
+  
+  command_.fill(0.0);
 
 
   return CallbackReturn::SUCCESS;
 }
 
-CallbackReturn DualJointVelocityExampleController::on_activate(    
+CallbackReturn DualJointVelocityController::on_activate(    
   const rclcpp_lifecycle::State& /*previous_state*/) {
-  // left_arm_model->assign_loaned_state_interfaces(state_interfaces_); //asign object to variable left arm model
-  // right_arm_model->assign_loaned_state_interfaces(state_interfaces_);  
-  // updateJointStates();
-  start_time_ = this->get_node()->now();
+
+  command_.fill(0.0);
+ 
   last_msg_time_ = this->get_node()->now();
-  init_time_ = rclcpp::Duration(0, 0);
-  DualJointVelocityExampleController::initSubscribers();
+
+  joint_velocity_subscriber_ = get_node()->create_subscription<std_msgs::msg::Float64MultiArray>(
+        command_topic_,1,
+        std::bind(
+          &DualJointVelocityController::jointVelocityCommandCallback,
+          this,std::placeholders::_1));
+  
+  RCLCPP_INFO(get_node()->get_logger(), "DualJointVelocityController activated. Listening to joint velocity commands on topic: %s", command_topic_.c_str());
+
   return CallbackReturn::SUCCESS;
 
 }
 
-CallbackReturn DualJointVelocityExampleController::on_error(
+CallbackReturn DualJointVelocityController::on_deactivate( const rclcpp_lifecycle::State&)
+{
+  command_.fill(0.0);
+
+  for (auto& command_interface : command_interfaces_)
+  {
+    command_interface.set_value(0.0);
+  }
+
+  joint_velocity_subscriber_.reset();
+
+  return CallbackReturn::SUCCESS;
+}
+
+CallbackReturn DualJointVelocityController::on_error(
   const rclcpp_lifecycle::State& /*previous_state*/){
+    command_.fill(0.0);
+
     RCLCPP_ERROR(this->get_node()->get_logger(), "error encountered!");
     return CallbackReturn::ERROR;
   }
 
-  void DualJointVelocityExampleController::initSubscribers() {
-
-    joint_velocity_subscriber_ = get_node()->create_subscription<std_msgs::msg::Float64MultiArray>(
-          "/joint_velocities", 1,
-          std::bind(&DualJointVelocityExampleController::jointVelocityCommandCallback, this, std::placeholders::_1)
-        );
-    
-  }
-   void DualJointVelocityExampleController::jointVelocityCommandCallback(const std_msgs::msg::Float64MultiArray& msg) {
-    if (msg.data.size() != 14) {
-      RCLCPP_ERROR(get_node()->get_logger(), "Received joint velocity command with incorrect size: %zu", msg.data.size());
-      return;
-    }
-    std::lock_guard<std::mutex> lock(cmd_mutex_);
-     for (size_t i = 0; i < 14; ++i) {
-      dq_cmd_[i] = msg.data[i];
-    }
-    last_msg_time_ = this->get_node()->now();
-    // for (size_t i = 0; i < 14; ++i) {
-    //   command_interfaces_[i].set_value(msg.data[i]);
-    //   // dq_left_(i) = msg.data[i];
-    //   // dq_right_(i) = msg.data[i+7];
-    // }
-
-      // command_interfaces_[i].set_value(msg.data[i]);
-      // command_interfaces_[i+7].set_value(msg.data[i+7]);
-      
- 
-
   
-
-
+void DualJointVelocityController::jointVelocityCommandCallback(const std_msgs::msg::Float64MultiArray& msg) {
+  if (msg.data.size() != NUM_JOINTS * NUM_ARMS) 
+  {
+    RCLCPP_ERROR(get_node()->get_logger(), 
+    "Expected %zu joint velocities, received %zu", NUM_JOINTS * NUM_ARMS, msg.data.size());
+    return;
   }
+  std::lock_guard<std::mutex> lock(command_mutex_);
+  //   for (size_t i = 0; i < NUM_JOINTS * NUM_ARMS; ++i) {
+  //   dq_cmd_[i] = msg.data[i];
+  // }
+  std::copy(msg.data.begin(), msg.data.end(), command_.begin());
+
+  last_msg_time_ = this->get_node()->now();
+
+
+}
 
 
 
 
+}  // namespace panda
 }  // namespace alberto_controllers
 #include "pluginlib/class_list_macros.hpp"
 // NOLINTNEXTLINE
-PLUGINLIB_EXPORT_CLASS(alberto_controllers::DualJointVelocityExampleController,
+PLUGINLIB_EXPORT_CLASS(alberto_controllers::panda::DualJointVelocityController,
                        controller_interface::ControllerInterface)

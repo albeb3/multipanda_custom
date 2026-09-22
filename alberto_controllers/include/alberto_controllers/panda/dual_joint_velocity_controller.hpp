@@ -31,18 +31,23 @@ for test
 using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
 namespace alberto_controllers {
+namespace panda {
 
 /**
  * The joint impedance example controller moves joint 4 and 5 in a very compliant periodic movement.
  */
-class DualJointVelocityExampleController : public controller_interface::ControllerInterface {
+class DualJointVelocityController : public controller_interface::ControllerInterface {
  public:
+  static constexpr std::size_t NUM_ARMS = 2;
+  static constexpr std::size_t NUM_JOINTS = 7;
   using Vector7d = Eigen::Matrix<double, 7, 1>;
+  using Vector14d = Eigen::Matrix<double, 14, 1>;
   struct ArmContainer{
     std::string arm_id_;
     Vector7d q_;
     Vector7d dq_;
   };
+  std::map<std::string, ArmContainer> arms_;
   
   controller_interface::InterfaceConfiguration command_interface_configuration() const override;
   controller_interface::InterfaceConfiguration state_interface_configuration() const override;
@@ -51,36 +56,23 @@ class DualJointVelocityExampleController : public controller_interface::Controll
   CallbackReturn on_init() override;
   CallbackReturn on_configure(const rclcpp_lifecycle::State& previous_state) override;
   CallbackReturn on_activate(const rclcpp_lifecycle::State& previous_state) override;
+  CallbackReturn on_deactivate(const rclcpp_lifecycle::State& previous_state) override;
   CallbackReturn on_error(const rclcpp_lifecycle::State& previous_state) override;
  private:
-  std::string arm_id_;
-  const int num_joints = 7;
-  Vector7d q_;
-  Vector7d initial_q_;
-  Vector7d dq_;
-  Vector7d dq_filtered_;
-  Vector7d k_gains_;
-  Vector7d d_gains_;
-  rclcpp::Time start_time_;
-  rclcpp::Duration init_time_ = rclcpp::Duration(0, 0);
-  std::map<std::string, ArmContainer> arms_;
-  Vector7d dq_left_;
-  Vector7d dq_right_;
-  std::array<double, 14> dq_cmd_;
-  std::mutex cmd_mutex_;
-
-  void initSubscribers();
-  
-  
-    // Teleop Velocities
-
-
-  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr joint_velocity_subscriber_;
   void jointVelocityCommandCallback(const std_msgs::msg::Float64MultiArray& msg);
 
-  rclcpp::Time last_msg_time_;
- 
-  
-};
+  std::string arm_id_;
+  std::string command_topic_;
 
+  std::array<double, NUM_JOINTS * 2> command_{};
+  std::mutex command_mutex_;
+  rclcpp::Time last_msg_time_;
+
+ 
+  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr joint_velocity_subscriber_;
+
+
+
+};
+} // namespace panda
 }  // namespace alberto_controllers

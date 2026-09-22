@@ -14,7 +14,7 @@ namespace alberto_controllers
 {
 namespace panda
 {
-
+/* CONTROLLER  */
 controller_interface::InterfaceConfiguration
 JointImpedanceController::command_interface_configuration() const
 {
@@ -53,106 +53,14 @@ JointImpedanceController::state_interface_configuration() const
 
 controller_interface::return_type
 JointImpedanceController::update(
-  const rclcpp::Time& /*time*/,
+  const rclcpp::Time& time,
   const rclcpp::Duration& period)
 {
-  if (command_interfaces_.size() != NUM_JOINTS)
-  {
-    RCLCPP_ERROR_THROTTLE(
-      get_node()->get_logger(),
-      *get_node()->get_clock(),
-      1000,
-      "Expected %zu command interfaces, found %zu",
-      NUM_JOINTS,
-      command_interfaces_.size());
-
-    return controller_interface::return_type::ERROR;
-  }
-
-  if (state_interfaces_.size() != 2 * NUM_JOINTS)
-  {
-    RCLCPP_ERROR_THROTTLE(
-      get_node()->get_logger(),
-      *get_node()->get_clock(),
-      1000,
-      "Expected %zu state interfaces, found %zu",
-      2 * NUM_JOINTS,
-      state_interfaces_.size());
-
-    return controller_interface::return_type::ERROR;
-  }
-
+  
   updateJointStates();
-
-  Vector7d desired_velocity = Vector7d::Zero();
-
-  double command_age = 0.0;
-  bool command_timed_out = false;
-
-  {
-    std::lock_guard<std::mutex> lock(
-      command_mutex_);
-
-    const auto now = std::chrono::steady_clock::now();
-
-    command_age = std::chrono::duration<double>( now - last_command_time_).count();
-
-    if (command_age > command_timeout_)
-    {
-      dq_desired_.setZero();
-      command_timed_out = true;
-    }
-
-    desired_velocity = dq_desired_;
-  }
-
-  if (command_timed_out)
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_node()->get_logger(),
-      *get_node()->get_clock(),
-      1000,
-      "Velocity command timeout: age=%.3f s, timeout=%.3f s",
-      command_age,
-      command_timeout_);
-  }
-
-  const double dt = period.seconds();
-
-  if (dt <= 0.0)
-  {
-    RCLCPP_ERROR_THROTTLE(
-      get_node()->get_logger(),
-      *get_node()->get_clock(),
-      1000,
-      "Controller period must be positive");
-
-    return controller_interface::return_type::ERROR;
-  }
-
-  /*
-   * Local joint-position reference generated from the desired
-   * joint velocity over the current control period.
-   */
-  q_goal_ = q_ + desired_velocity * dt;
-
-  dq_desired_filtered_ = velocity_filter_alpha_ * desired_velocity + (1.0 - velocity_filter_alpha_) * dq_desired_filtered_;
-
-  dq_filtered_ = velocity_filter_alpha_ * dq_ + (1.0 - velocity_filter_alpha_) * dq_filtered_;
-
-  const Vector7d position_error = q_goal_ - q_;
-
-  const Vector7d velocity_error = dq_desired_filtered_ ;
-
-  const Vector7d desired_torque = k_gains_.cwiseProduct(position_error) + d_gains_.cwiseProduct(velocity_error);
-
-  for (std::size_t joint = 0; joint < NUM_JOINTS; ++joint)
-  {
-    const double torque = desired_torque( static_cast<Eigen::Index>(joint));
-
-    command_interfaces_[joint].set_value( torque);
-
-  }
+  computeControl(period);
+  writeCommands();
+  publishDebugVelocities(time);
 
   return controller_interface::return_type::OK;
 }
@@ -169,6 +77,8 @@ JointImpedanceController::on_init()
     auto_declare<double>("command_timeout",0.5);
 
     auto_declare<double>("velocity_filter_alpha",0.99);
+
+    auto_declare<double>("command_frequency",100.0);
 
     auto_declare<std::vector<double>>("k_gains",{});
 
@@ -194,11 +104,12 @@ JointImpedanceController::on_configure(
 
   command_timeout_ =get_node()->get_parameter("command_timeout").as_double();
 
-  velocity_filter_alpha_ =get_node()->get_parameter("velocity_filter_alpha").as_double();
+  command_frequency_ =get_node()->get_parameter("command_frequency").as_double();
 
   const std::vector<double> k_gains =get_node()->get_parameter("k_gains").as_double_array();
 
   const std::vector<double> d_gains =get_node()->get_parameter("d_gains").as_double_array();
+
 
   if (arm_id_.empty())
   {
@@ -221,9 +132,10 @@ JointImpedanceController::on_configure(
     return CallbackReturn::FAILURE;
   }
 
-  if (velocity_filter_alpha_ < 0.0 ||velocity_filter_alpha_ > 1.0)
+
+  if (command_frequency_ <= 0.0)
   {
-    RCLCPP_ERROR(get_node()->get_logger(),"Parameter 'velocity_filter_alpha' must be in [0, 1]");
+    RCLCPP_ERROR(get_node()->get_logger(),"Parameter 'command_frequency' must be positive");
 
     return CallbackReturn::FAILURE;
   }
@@ -255,9 +167,18 @@ JointImpedanceController::on_configure(
   dq_.setZero();
   q_goal_.setZero();
 
-  dq_desired_.setZero();
-  dq_desired_filtered_.setZero();
-  dq_filtered_.setZero();
+  dq_command_.setZero();
+  dq_interpolated_.setZero();
+
+  dq_interpolation_start_.setZero();
+  dq_interpolation_end_.setZero();
+
+  interpolation_elapsed_ = 0.0;
+  new_command_received_ = false;
+
+  debug_publishers_counter_ = 0;
+
+
 
   RCLCPP_INFO(get_node()->get_logger(),"Configured joint impedance controller for arm '%s'",arm_id_.c_str());
 
@@ -283,20 +204,29 @@ JointImpedanceController::on_activate(
   }
 
   updateJointStates();
-
-  q_goal_ =
-    q_;
+  initializeDebugPublishers();
+  q_goal_ = q_;
 
   {
     std::lock_guard<std::mutex> lock(command_mutex_);
 
-    dq_desired_.setZero();
+    dq_command_.setZero();
+    dq_interpolated_.setZero();
+    new_command_received_ = false;
 
     last_command_time_ = std::chrono::steady_clock::now();
   }
 
-  dq_desired_filtered_.setZero();
-  dq_filtered_.setZero();
+
+
+  dq_interpolation_start_.setZero();
+  dq_interpolation_end_.setZero();
+
+
+
+  interpolation_elapsed_ = 0.0;
+
+  desired_torque_.setZero();
 
   initializeSubscriber();
 
@@ -326,17 +256,28 @@ JointImpedanceController::on_deactivate(
   {
     std::lock_guard<std::mutex> lock(command_mutex_);
 
-    dq_desired_.setZero();
+    dq_command_.setZero();
+    dq_interpolated_.setZero();
+    new_command_received_ = false;
   }
 
-  dq_desired_filtered_.setZero();
-  dq_filtered_.setZero();
+
+
+  dq_interpolation_start_.setZero();
+  dq_interpolation_end_.setZero();
+
+  interpolation_elapsed_ = 0.0;
+  desired_torque_.setZero();
 
   for (auto& command_interface : command_interfaces_)
   {
     command_interface.set_value(0.0);
   }
+  dq_publisher.reset();
 
+  dq_interpolated_publisher_.reset();
+
+  debug_publishers_counter_ = 0;
   joint_velocity_subscriber_.reset();
 
   return CallbackReturn::SUCCESS;
@@ -349,17 +290,72 @@ JointImpedanceController::on_error(
   {
     std::lock_guard<std::mutex> lock(command_mutex_);
 
-    dq_desired_.setZero();
+    dq_command_.setZero();
+    dq_interpolated_.setZero();
+    new_command_received_ = false;
   }
 
+
+  dq_interpolation_start_.setZero();
+  dq_interpolation_end_.setZero();
+
+
+
+  interpolation_elapsed_ = 0.0;
+
+  desired_torque_.setZero();
   for (auto& command_interface : command_interfaces_)
   {
     command_interface.set_value(0.0);
   }
 
+  joint_velocity_subscriber_.reset();
+
+  dq_publisher.reset();
+
+
+  dq_interpolated_publisher_.reset();
+
+  debug_publishers_counter_ = 0;
+
   RCLCPP_ERROR(get_node()->get_logger(),"JointImpedanceController entered error state");
 
   return CallbackReturn::ERROR;
+}
+
+
+/* IMPLEMENTATION */
+
+void JointImpedanceController::initializeSubscriber()
+{
+  /*
+   * Velocity command subscription:
+   *
+   * The controller runs at a higher frequency (e.g. 1 kHz) than the command
+   * publisher (e.g. 100 Hz). For velocity commands, receiving an old command
+   * is generally worse than losing a single message, because stale commands
+   * introduce delay in the control loop.
+   *
+   * Therefore, use:
+   * - KEEP_LAST(1): keep only the most recent command, discarding outdated data
+   * - BEST_EFFORT: avoid DDS retransmissions of old commands that can introduce
+   *   latency and affect real-time control behavior
+   *
+   * This QoS policy is suitable for real-time velocity/teleoperation commands,
+   * where the priority is minimizing latency rather than guaranteeing delivery
+   * of every message.
+   */
+  auto qos = rclcpp::QoS(rclcpp::KeepLast(1));
+  qos.best_effort();
+
+  joint_velocity_subscriber_ =
+    get_node()->create_subscription<std_msgs::msg::Float64MultiArray>(
+      command_topic_,
+      qos,
+      std::bind(
+        &JointImpedanceController::jointVelocityCommandCallback,
+        this,
+        std::placeholders::_1));
 }
 
 void JointImpedanceController::updateJointStates()
@@ -382,43 +378,175 @@ void JointImpedanceController::updateJointStates()
   }
 }
 
-void JointImpedanceController::initializeSubscriber()
-{
-  joint_velocity_subscriber_ = get_node()->create_subscription<std_msgs::msg::Float64MultiArray>(command_topic_,1,std::bind(
-          &JointImpedanceController::jointVelocityCommandCallback,this,std::placeholders::_1));
-}
-
 void JointImpedanceController::jointVelocityCommandCallback(
   const std_msgs::msg::Float64MultiArray& msg)
 {
   if (msg.data.size() != NUM_JOINTS)
   {
     RCLCPP_ERROR(get_node()->get_logger(),"Expected %zu velocity commands, received %zu",NUM_JOINTS,msg.data.size());
-
     return;
   }
 
-  Vector7d received_command = Vector7d::Zero();
+  {
+    std::lock_guard<std::mutex> lock(command_mutex_);
+    dq_command_ = Eigen::Map<const Vector7d>(msg.data.data());
+
+    new_command_received_ = true;
+    last_command_time_ = std::chrono::steady_clock::now();
+  }
+}
+
+Vector7d JointImpedanceController::interpolate(const Vector7d& start, const Vector7d& target ,double t)
+{
+  return (1.0 - t) * start + t * target;
+   
+}
+
+void JointImpedanceController::computeControl( const rclcpp::Duration& period)
+{
+  const double dt = period.seconds();
+
+  Vector7d command_target = Vector7d::Zero();
+  bool new_command = false;
+
+  double command_age = 0.0;
+  bool command_timed_out = false;
 
   {
     std::lock_guard<std::mutex> lock(command_mutex_);
-
-    for (std::size_t joint = 0; joint < NUM_JOINTS; ++joint)
+    if (new_command_received_)
     {
-      const Eigen::Index index = static_cast<Eigen::Index>(joint);
+      command_target = dq_command_;
 
-      dq_desired_(index) = msg.data[joint];
+      new_command = new_command_received_;
 
-      received_command(index) = msg.data[joint];
+      new_command_received_ = false;
+
+      command_age = std::chrono::duration<double>(std::chrono::steady_clock::now() - last_command_time_).count();
+
     }
 
-    last_command_time_ = std::chrono::steady_clock::now();
+   
   }
 
-  RCLCPP_INFO_STREAM_THROTTLE( get_node()->get_logger(), *get_node()->get_clock(), 1000, "\nReceived /joint_velocities:" "\n  dq desired = "<< received_command.transpose());
+  if (command_age > command_timeout_)
+  {
+    command_target.setZero();
+    command_timed_out = true;
+  }
+
+  if (new_command)
+  {
+    dq_interpolation_start_ = dq_interpolated_;
+    dq_interpolation_end_   = command_target;
+    interpolation_elapsed_ = 0.0;
+    new_command = false;
+    RCLCPP_WARN_THROTTLE( get_node()->get_logger(), *get_node()->get_clock(), 1000,
+                        "Time since last command: %.3f s, new command received, interpolating to new target velocity",command_age);
+   
+  }
+
+
+  
+
+  const double alpha = std::clamp(interpolation_elapsed_ * command_frequency_,0.0,1.0);
+  interpolation_elapsed_ += period.seconds();
+  dq_interpolated_ = interpolate(dq_interpolation_start_,dq_interpolation_end_,alpha);
+
+
+
+  /*
+   * Local joint-position reference generated from the desired
+   * joint velocity over the current control period.
+   */
+
+
+  q_goal_ += dq_interpolated_ * dt;
+
+  const Vector7d position_error = q_goal_ - q_;
+
+  const Vector7d velocity_error = dq_interpolated_ - dq_;
+  
+  desired_torque_ = k_gains_.cwiseProduct(position_error) + d_gains_.cwiseProduct(velocity_error);
+
 }
 
-}  // namespace panda
+void JointImpedanceController::writeCommands()
+{
+  
+
+  for (std::size_t joint = 0; joint < NUM_JOINTS; ++joint)
+  {
+    const double torque = desired_torque_(static_cast<Eigen::Index>(joint));
+
+    command_interfaces_[joint].set_value( torque);
+
+  }
+}
+void JointImpedanceController::initializeDebugPublishers()
+{
+  constexpr std::size_t queue_size = 10;
+
+  dq_publisher =
+    std::make_shared<RealtimeVelocityPublisher>(
+      get_node()->create_publisher<
+        std_msgs::msg::Float64MultiArray>(
+          "~/debug/dq_command_target",
+          queue_size));
+
+
+  dq_interpolated_publisher_ =
+    std::make_shared<RealtimeVelocityPublisher>(
+      get_node()->create_publisher<
+        std_msgs::msg::Float64MultiArray>(
+          "~/debug/dq_interpolated",
+          queue_size));
+
+  dq_publisher->msg_.data.resize(NUM_JOINTS);
+  dq_interpolated_publisher_->msg_.data.resize(NUM_JOINTS);
+}
+void JointImpedanceController::publishDebugVelocities( const rclcpp::Time& /*time*/)
+{
+  ++debug_publishers_counter_;
+
+  if (debug_publishers_counter_ < debug_publish_decimation_)
+  {
+    return;
+  }
+
+  debug_publishers_counter_ = 0;
+
+  if (
+    dq_publisher &&
+    dq_publisher->trylock())
+  {
+    for (std::size_t joint = 0; joint < NUM_JOINTS; ++joint)
+    {
+      dq_publisher->msg_.data[joint] =
+        dq_interpolation_end_(static_cast<Eigen::Index>(joint));
+    }
+
+    dq_publisher->unlockAndPublish();
+  }
+
+ 
+
+  if (
+    dq_interpolated_publisher_ &&
+    dq_interpolated_publisher_->trylock())
+  {
+    for (std::size_t joint = 0; joint < NUM_JOINTS; ++joint)
+    {
+      dq_interpolated_publisher_->msg_.data[joint] =
+        dq_interpolated_(static_cast<Eigen::Index>(joint));
+    }
+
+    dq_interpolated_publisher_->unlockAndPublish();
+  }
+}
+
+
+} // namespace panda
 }  // namespace alberto_controllers
 
 PLUGINLIB_EXPORT_CLASS(

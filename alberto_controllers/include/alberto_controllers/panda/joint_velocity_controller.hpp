@@ -25,6 +25,7 @@ class JointVelocityController final
 {
 public:
   static constexpr std::size_t NUM_JOINTS = 7;
+  
 
   controller_interface::InterfaceConfiguration command_interface_configuration() const override;
 
@@ -50,6 +51,8 @@ private:
 
   std::array<double, NUM_JOINTS> command_{};
   std::mutex command_mutex_;
+  rclcpp::Time last_msg_time_;
+ 
 
   rclcpp::Subscription<
     std_msgs::msg::Float64MultiArray>::SharedPtr
